@@ -1,0 +1,16 @@
+# Core runtime dependencies for Desktop Pet
+# Install with: pip install -r requirements.txt
+#
+# All packages below are free and open-source (MIT/BSD/LGPL-compatible),
+# safe for commercial and public GitHub distribution.
+
+PySide6>=6.7.0        # Qt6 bindings — window, rendering, event loop (LGPL)
+Pillow>=10.3.0         # Image loading, sprite sheet slicing (HPND/MIT-like)
+pygame-ce>=2.5.0       # Audio backend for sound effects (LGPL)
+pynput>=1.7.7          # Global mouse/keyboard listening (LGPL)
+pyautogui>=0.9.54      # Cursor position + screen queries (BSD)
+screeninfo>=0.8.1      # Multi-monitor geometry detection (MIT)
+numpy>=1.26.0          # Vector math for physics (BSD)
+
+# Optional, install manually if needed:
+# pyqtgraph>=0.13.7    # Only if we add debug/perf graphs later

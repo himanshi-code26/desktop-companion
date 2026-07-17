@@ -1,0 +1,31 @@
+{
+  "$schema_version": 1,
+  "window": {
+    "always_on_top": true,
+    "transparency": 1.0,
+    "size_scale": 1.0,
+    "start_x": null,
+    "start_y": null
+  },
+  "physics": {
+    "gravity": 980.0,
+    "friction": 0.85,
+    "max_fall_speed": 1200.0,
+    "bounce_damping": 0.4
+  },
+  "behavior": {
+    "personality": "friendly",
+    "idle_frequency": 0.5,
+    "cursor_interest": 0.6,
+    "follow_cursor_timeout_seconds": 20
+  },
+  "audio": {
+    "muted": false,
+    "master_volume": 0.7,
+    "ambient_sounds_enabled": true
+  },
+  "pet": {
+    "active_pet": "default_cat",
+    "active_skin": "default"
+  }
+}

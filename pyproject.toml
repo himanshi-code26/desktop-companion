@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "desktop-pet"
+version = "0.1.0"
+description = "A free, open-source, physics-based, AI-behavior desktop pet companion."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Desktop Pet Contributors" }
+]
+keywords = ["desktop-pet", "virtual-pet", "pyside6", "companion-app", "open-source"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Desktop Environment",
+    "Topic :: Games/Entertainment",
+]
+
+dependencies = [
+    "PySide6>=6.7.0",
+    "Pillow>=10.3.0",
+    "pygame-ce>=2.5.0",
+    "pynput>=1.7.7",
+    "pyautogui>=0.9.54",
+    "screeninfo>=0.8.1",
+    "numpy>=1.26.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-qt>=4.4.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.5.0",
+    "mypy>=1.10.0",
+]
+plotting = [
+    "pyqtgraph>=0.13.7",
+]
+
+[project.scripts]
+desktop-pet = "desktop_pet.main:main"
+
+[project.urls]
+Homepage = "https://github.com/your-org/desktop-pet"
+Issues = "https://github.com/your-org/desktop-pet/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_ignores = true
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+qt_api = "pyside6"
