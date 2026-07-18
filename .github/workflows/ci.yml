@@ -25,11 +25,13 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: "pip"
 
-      - name: Install system dependencies for Qt (Linux only)
+      - name: Install system dependencies for Qt and X11 (Linux only)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libxcb-cursor0
+          sudo apt-get install -y \
+            libegl1 libgl1 libxkbcommon0 libxcb-cursor0 \
+            xvfb x11-utils
 
       - name: Install project (with dev extras)
         run: |
@@ -39,7 +41,20 @@ jobs:
       - name: Lint with ruff
         run: ruff check src tests
 
-      - name: Run tests
+      # Linux runners have no display server at all, which is a
+      # different problem from Qt's own headless support: PySide6 can
+      # render with QT_QPA_PLATFORM=offscreen without any X server, but
+      # pyautogui talks to Xlib directly and needs a *real* (even if
+      # virtual) display to exist, or its import fails. `xvfb-run`
+      # starts a virtual X server, exports DISPLAY for the wrapped
+      # command, and tears it down afterwards - so pyautogui's
+      # dependency check succeeds for real here, not just gracefully.
+      - name: Run tests (Linux, under Xvfb)
+        if: runner.os == 'Linux'
         env:
           QT_QPA_PLATFORM: offscreen
+        run: xvfb-run -a --server-args="-screen 0 1280x1024x24" pytest --cov=desktop_pet --cov-report=term-missing
+
+      - name: Run tests (Windows/macOS)
+        if: runner.os != 'Linux'
         run: pytest --cov=desktop_pet --cov-report=term-missing

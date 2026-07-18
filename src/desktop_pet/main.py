@@ -20,6 +20,25 @@ builds the composition root (``desktop_pet.core.app.Application``),
 which creates the transparent always-on-top pet window and starts the
 60 FPS game loop.
 
+Headless Linux (CI) compatibility
+----------------------------------
+Two of our dependencies behave differently in a headless Linux
+environment (e.g. a GitHub Actions Ubuntu runner with no X server):
+
+- ``pyautogui`` reads ``os.environ['DISPLAY']`` with direct bracket
+  access *at import time* on Linux, deep inside its own internals. If
+  ``DISPLAY`` isn't set, that raises an uncaught ``KeyError`` — not an
+  ``ImportError`` — which is a fragile, unsafe pattern on pyautogui's
+  part that we have to defend against from our side, since we can't
+  edit third-party source. ``_ensure_safe_display_environment()``
+  below guards this with ``os.environ.setdefault(...)`` (a safe,
+  non-raising read/write) before we ever attempt the import.
+- Because of that, ``check_dependencies()`` now catches ``Exception``
+  broadly rather than only ``ImportError``, so no single fragile
+  dependency (on any platform) can crash environment verification for
+  everything else — it's simply reported as not installed, with the
+  error message preserved for the log.
+
 Run it with:
     python -m desktop_pet.main
 or, once installed:
@@ -29,6 +48,7 @@ or, once installed:
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from dataclasses import dataclass
 from importlib import import_module
@@ -76,21 +96,56 @@ def configure_logging(level: int = logging.INFO) -> None:
     )
 
 
+def _ensure_safe_display_environment() -> None:
+    """Guard against fragile direct ``os.environ['DISPLAY']`` reads.
+
+    On Linux, ``pyautogui`` (via its Xlib backend) reads
+    ``os.environ['DISPLAY']`` with plain bracket access the moment it's
+    imported, and raises an uncaught ``KeyError`` if the variable is
+    absent — which it always is on a headless CI runner with no X
+    server. We can't fix pyautogui's source, but we can make sure the
+    key exists before that import ever happens, using
+    ``os.environ.setdefault`` — which only ever reads or writes safely
+    and never raises.
+
+    This is intentionally a no-op on Windows and macOS, where
+    ``DISPLAY`` doesn't apply. It's also a no-op if a real ``DISPLAY``
+    is already set (e.g. a real desktop session, or a CI runner using
+    ``xvfb-run``) — ``setdefault`` never overwrites an existing value.
+    If no real X server is behind the value, the subsequent import may
+    still fail (e.g. a connection error from Xlib) — that failure is
+    now a normal, catchable ``Exception`` instead of an uncaught
+    ``KeyError``, and ``check_dependencies`` handles it gracefully.
+    """
+    if sys.platform.startswith("linux"):
+        os.environ.setdefault("DISPLAY", ":99")
+
+
 def check_python_version() -> bool:
-    """Return True if the running interpreter meets MIN_PYTHON."""
-    if sys.version_info[:2] < MIN_PYTHON:
+    """Return True if the running interpreter meets MIN_PYTHON.
+
+    Uses index access (``sys.version_info[0]``, ``[1]``) rather than
+    attribute access (``.major``, ``.minor``) so this also works when
+    tests monkeypatch ``sys.version_info`` with a plain tuple, which
+    has no ``.major``/``.minor`` attributes. Real ``sys.version_info``
+    supports both forms, so this is a strictly safer superset.
+    """
+    current_major, current_minor = sys.version_info[0], sys.version_info[1]
+    if (current_major, current_minor) < MIN_PYTHON:
         logger.error(
             "Python %s.%s+ is required, but %s.%s is running.",
             *MIN_PYTHON,
-            sys.version_info.major,
-            sys.version_info.minor,
+            current_major,
+            current_minor,
         )
         return False
+
+    current_micro = sys.version_info[2] if len(sys.version_info) > 2 else 0
     logger.info(
         "Python version OK (%s.%s.%s)",
-        sys.version_info.major,
-        sys.version_info.minor,
-        sys.version_info.micro,
+        current_major,
+        current_minor,
+        current_micro,
     )
     return True
 
@@ -101,7 +156,18 @@ def check_dependencies() -> list[DependencyStatus]:
     This never raises — it collects results for all dependencies so a
     user missing three packages sees all three at once, not just the
     first one that fails.
+
+    The except clause intentionally catches ``Exception`` rather than
+    just ``ImportError``: some GUI-related libraries (e.g. pyautogui
+    on headless Linux, see ``_ensure_safe_display_environment`` above)
+    can raise other exception types (``KeyError``, connection errors,
+    etc.) directly from their import machinery. Treating any such
+    failure as "dependency not available" — instead of letting it
+    crash this function — is what keeps environment verification (and
+    the tests that exercise it) robust across platforms.
     """
+    _ensure_safe_display_environment()
+
     results: list[DependencyStatus] = []
     for distribution_name, module_name in REQUIRED_DEPENDENCIES.items():
         try:
@@ -119,7 +185,7 @@ def check_dependencies() -> list[DependencyStatus]:
                 )
             )
             logger.info("Dependency OK: %-12s (%s)", distribution_name, resolved_version)
-        except ImportError as exc:
+        except Exception as exc:  # noqa: BLE001 - intentionally broad, see docstring
             results.append(
                 DependencyStatus(
                     distribution_name=distribution_name,
