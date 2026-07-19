@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 
 import pytest
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import QEvent, QPoint, Qt
 from PySide6.QtGui import QColor, QImage, QKeyEvent
 
 from desktop_pet.core.paths import get_assets_dir
@@ -19,6 +19,29 @@ from desktop_pet.ui.pet_window import DEFAULT_SPRITE_SIZE, PetWindow
 @pytest.fixture
 def sprite_path():
     return get_assets_dir() / "sprites" / "placeholder_pet.png"
+
+
+class _RelativeCursorProvider:
+    """A fake cursor position provider for tests.
+
+    Tracks a ``PetWindow``'s actual on-screen position with a fixed
+    pixel offset, so zone classification (which depends on the
+    distance between the cursor and wherever the window really ends up
+    on screen) is deterministic regardless of the real screen geometry
+    in whatever environment the test suite runs in — CI's virtual
+    display may not match a developer's machine.
+    """
+
+    def __init__(self, offset_x: float, offset_y: float) -> None:
+        self.window: PetWindow | None = None
+        self._offset_x = offset_x
+        self._offset_y = offset_y
+
+    def __call__(self) -> QPoint:
+        assert self.window is not None, "window must be assigned after construction"
+        center_x = self.window.x() + self.window._target_size / 2
+        center_y = self.window.y() + self.window._target_size / 2
+        return QPoint(int(center_x + self._offset_x), int(center_y + self._offset_y))
 
 
 def _write_test_png(path, width: int, height: int, fill_argb: tuple[int, int, int, int]) -> None:
@@ -161,8 +184,12 @@ def test_sway_rotates_sprite_item_transform(qtbot, sprite_path) -> None:
 def test_idle_animations_never_exceed_their_bounds_over_time(qtbot, sprite_path) -> None:
     """Runs a longer simulated stretch (well beyond any single wait
     range) and checks every animation stays within its documented
-    bounds throughout - a smoke test against jitter/overshoot."""
-    window = PetWindow(sprite_path)
+    bounds throughout - a smoke test against jitter/overshoot. Uses a
+    fixed close-by fake cursor so the attention path is actually
+    exercised deterministically alongside sway/blink."""
+    provider = _RelativeCursorProvider(offset_x=50, offset_y=0)
+    window = PetWindow(sprite_path, cursor_position_provider=provider)
+    provider.window = window
     qtbot.addWidget(window)
     base_y = window._base_y
 
@@ -171,6 +198,71 @@ def test_idle_animations_never_exceed_their_bounds_over_time(qtbot, sprite_path)
         assert abs(window.y() - base_y) <= 4.0
         assert 0.0 < window._blink.scale_y <= 1.0
         assert abs(window._sway.tilt_degrees) <= 3.0001
+        assert abs(window._cursor_attention.tilt_degrees) <= 3.0001
+
+
+# -- cursor attention wiring ------------------------------------------------
+
+
+def test_cursor_nearby_produces_rotation_without_moving_window(qtbot, sprite_path) -> None:
+    """Requirement: the pet reacts to a nearby cursor without moving."""
+    provider = _RelativeCursorProvider(offset_x=50, offset_y=0)  # zone A: <180px
+    window = PetWindow(sprite_path, cursor_position_provider=provider)
+    provider.window = window
+    qtbot.addWidget(window)
+    base_y = window._base_y
+    x_before = window.x()
+
+    for _ in range(120):  # 2 seconds - enough for attention to engage and settle
+        window.advance(1 / 60)
+
+    assert window._cursor_attention.current_zone == "A"
+    assert window._cursor_attention.is_interested is True
+    assert window._cursor_attention.tilt_degrees != 0.0
+
+    transform = window._sprite_item.transform()
+    assert (transform.m12(), transform.m21()) != (0.0, 0.0)  # rotation is present
+
+    # Position must be untouched by cursor attention: x never changes,
+    # and y only ever moves within the breathing amplitude around base_y.
+    assert window.x() == x_before
+    assert abs(window.y() - base_y) <= 4.0
+
+
+def test_cursor_far_away_leaves_pet_at_rest(qtbot, sprite_path) -> None:
+    """Requirement: zone C (>350px) is ignored entirely."""
+    provider = _RelativeCursorProvider(offset_x=100_000, offset_y=0)  # always zone C
+    window = PetWindow(sprite_path, cursor_position_provider=provider)
+    provider.window = window
+    qtbot.addWidget(window)
+
+    for _ in range(120):  # 2 seconds
+        window.advance(1 / 60)
+
+    assert window._cursor_attention.current_zone == "C"
+    assert window._cursor_attention.is_interested is False
+    assert window._cursor_attention.tilt_degrees == pytest.approx(0.0, abs=0.05)
+
+
+def test_cursor_attention_never_interrupts_breathing(qtbot, sprite_path) -> None:
+    """Requirement: cursor attention must blend with, and never
+    interrupt, the breathing animation."""
+    provider = _RelativeCursorProvider(offset_x=50, offset_y=0)
+    window = PetWindow(sprite_path, cursor_position_provider=provider)
+    provider.window = window
+    qtbot.addWidget(window)
+    base_y = window._base_y
+
+    observed_ys = set()
+    for _ in range(240):  # a couple of full breathing cycles
+        window.advance(1 / 60)
+        observed_ys.add(window.y())
+
+    # Breathing is still producing genuine vertical oscillation (more
+    # than a single frozen y value) even while cursor attention is
+    # simultaneously active.
+    assert len(observed_ys) > 1
+    assert all(abs(y - base_y) <= 4.0 for y in observed_ys)
 
 
 # -- PNG loading, invalid image fallback, transparency ---------------------

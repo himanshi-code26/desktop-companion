@@ -7,9 +7,11 @@ The pet's on-screen window.
 A transparent, frameless, always-on-top window that stays clickable
 (not click-through), showing the pet sprite with continuous idle
 animation so it never looks like a frozen image: subtle breathing,
-occasional blinks, and occasional sway. Dragging and cursor
-interaction are separate, later phases — this file only owns the
-window and its idle behavior.
+occasional blinks, occasional sway, and now cursor awareness — a
+subtle lean/turn toward the cursor based on distance, with no actual
+movement. Dragging, walking, and gravity are separate, later phases —
+this file only owns the window and its in-place idle/reactive
+behavior.
 
 Sprite loading: loading is resilient by design. A requested sprite is
 tried first; if it's missing or fails to decode, a warning is logged
@@ -22,22 +24,33 @@ never stretched to fill it.
 
 Rendering: the sprite is drawn via a ``QGraphicsView``/
 ``QGraphicsPixmapItem`` rather than a plain ``QLabel``. This is what
-lets rotation (sway) and vertical scale (blink) be applied every frame
-as a cheap transform-matrix update — Qt reuses the same decoded pixmap
-and just changes how it's painted — instead of re-resampling the
-pixmap 60 times a second, which would be both slower and prone to
-visible jitter as the transformed image's bounding box shifts
-slightly frame to frame.
+lets rotation (sway, cursor attention) and vertical scale (blink) be
+applied every frame as a cheap transform-matrix update — Qt reuses the
+same decoded pixmap and just changes how it's painted — instead of
+re-resampling the pixmap 60 times a second, which would be both slower
+and prone to visible jitter as the transformed image's bounding box
+shifts slightly frame to frame.
+
+Cursor awareness: sway (idle, random) and cursor attention (reactive)
+are simply *summed* into one rotation rather than one replacing the
+other. Both are individually small and each already eases smoothly
+toward its own target (including back to 0), so adding them avoids an
+abrupt hand-off discontinuity the moment attention starts or stops —
+there's no instant in time where the rendered rotation has to jump
+from "whatever sway was doing" to "whatever attention is doing" or
+back; it's already a single continuous value.
 """
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Callable
 
-from PySide6.QtCore import QRectF, Qt
+from PySide6.QtCore import QPoint, QRectF, Qt
 from PySide6.QtGui import (
     QColor,
+    QCursor,
     QGuiApplication,
     QKeyEvent,
     QPainter,
@@ -54,6 +67,7 @@ from PySide6.QtWidgets import (
 )
 
 from desktop_pet.animation import BlinkScheduler, BreathingAnimation, SwayAnimation
+from desktop_pet.behavior import CursorAttention
 from desktop_pet.core.paths import get_placeholder_sprite_path
 
 logger = logging.getLogger("desktop_pet.ui.pet_window")
@@ -127,16 +141,34 @@ class PetWindow(QWidget):
         fallback_sprite_path: Path | None = None,
         target_size: int = DEFAULT_SPRITE_SIZE,
         parent: QWidget | None = None,
+        cursor_position_provider: Callable[[], QPoint] | None = None,
     ) -> None:
+        """
+        Args:
+            sprite_path: The PNG to display.
+            fallback_sprite_path: Used if ``sprite_path`` can't be
+                loaded. Defaults to the built-in placeholder.
+            target_size: Width/height (px) the sprite is scaled to fit
+                within.
+            parent: Optional parent widget.
+            cursor_position_provider: Zero-argument callable returning
+                the current global cursor position as a ``QPoint``.
+                Defaults to ``QCursor.pos``. Overridable so tests can
+                supply a fixed/fake cursor position instead of
+                depending on the real (and, in headless CI, undefined)
+                OS cursor.
+        """
         super().__init__(parent)
 
         self._base_y: int | None = None
         self._target_size = target_size
         self._fallback_sprite_path = fallback_sprite_path or get_placeholder_sprite_path()
+        self._cursor_position_provider = cursor_position_provider or QCursor.pos
 
         self._breathing = BreathingAnimation()
         self._blink = BlinkScheduler()
         self._sway = SwayAnimation()
+        self._cursor_attention = CursorAttention()
 
         self._configure_window_flags()
         pixmap = self._load_sprite_with_fallback(sprite_path)
@@ -233,12 +265,13 @@ class PetWindow(QWidget):
     def advance(self, delta_time: float) -> None:
         """Called once per tick by the GameLoop (60 FPS).
 
-        Advances all three idle animations and applies their current
-        values: breathing moves the whole window a few pixels
-        vertically; blink and sway are combined into a single
-        transform (squash + rotation) applied to the sprite item, both
-        pivoting around its center thanks to the offset set up in
-        ``_build_sprite_view``.
+        Advances breathing, blink, sway, and cursor attention, then
+        applies their current values: breathing moves the whole window
+        a few pixels vertically (cursor attention never touches
+        position, only rotation, so breathing is never interrupted);
+        blink and the combined sway+attention rotation are applied as
+        a single transform on the sprite item, pivoting around its
+        center thanks to the offset set up in ``_build_sprite_view``.
         """
         self._breathing.advance(delta_time)
         self._blink.advance(delta_time)
@@ -248,8 +281,16 @@ class PetWindow(QWidget):
             offset = round(self._breathing.offset_px)
             self.move(self.x(), self._base_y + offset)
 
+        cursor_pos = self._cursor_position_provider()
+        pet_center_x = self.x() + self._target_size / 2
+        pet_center_y = self.y() + self._target_size / 2
+        self._cursor_attention.advance(
+            delta_time, cursor_pos.x(), cursor_pos.y(), pet_center_x, pet_center_y
+        )
+
+        total_rotation_degrees = self._sway.tilt_degrees + self._cursor_attention.tilt_degrees
         transform = QTransform()
-        transform.rotate(self._sway.tilt_degrees)
+        transform.rotate(total_rotation_degrees)
         transform.scale(1.0, self._blink.scale_y)
         self._sprite_item.setTransform(transform)
 
