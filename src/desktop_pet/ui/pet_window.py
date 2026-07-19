@@ -4,33 +4,56 @@ desktop_pet.ui.pet_window
 
 The pet's on-screen window.
 
-Phase 2 scope: a single static sprite shown in a transparent, frameless,
-always-on-top window that stays clickable (not click-through), plus a
-tiny idle "bob" driven by the real game loop to prove the 60 FPS update
-loop is actually running. Sprite-sheet animation, dragging, and cursor
-interaction are separate, later phases (3, 5, 6) — this file only owns
-the window itself.
+A transparent, frameless, always-on-top window that stays clickable
+(not click-through), showing the pet sprite with continuous idle
+animation so it never looks like a frozen image: subtle breathing,
+occasional blinks, and occasional sway. Dragging and cursor
+interaction are separate, later phases — this file only owns the
+window and its idle behavior.
 
-Sprite loading (this update): loading is resilient by design. A
-requested sprite is tried first; if it's missing or fails to decode, a
-warning is logged and the built-in placeholder is tried instead; if
-even that fails, a simple in-memory pixmap is generated so the window
-can still open. The image is scaled to fit within a single square
-target size (``DEFAULT_SPRITE_SIZE``) while preserving its aspect
-ratio and using smooth (non-jagged) resampling, then centered inside
-the window — never stretched to fill it.
+Sprite loading: loading is resilient by design. A requested sprite is
+tried first; if it's missing or fails to decode, a warning is logged
+and the built-in placeholder is tried instead; if even that fails, a
+simple in-memory pixmap is generated so the window can still open. The
+image is scaled to fit within a single square target size
+(``DEFAULT_SPRITE_SIZE``) while preserving its aspect ratio and using
+smooth (non-jagged) resampling, then centered inside the window —
+never stretched to fill it.
+
+Rendering: the sprite is drawn via a ``QGraphicsView``/
+``QGraphicsPixmapItem`` rather than a plain ``QLabel``. This is what
+lets rotation (sway) and vertical scale (blink) be applied every frame
+as a cheap transform-matrix update — Qt reuses the same decoded pixmap
+and just changes how it's painted — instead of re-resampling the
+pixmap 60 times a second, which would be both slower and prone to
+visible jitter as the transformed image's bounding box shifts
+slightly frame to frame.
 """
 
 from __future__ import annotations
 
 import logging
-import math
 from pathlib import Path
 
 from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QColor, QGuiApplication, QKeyEvent, QPainter, QPixmap
-from PySide6.QtWidgets import QApplication, QLabel, QWidget
+from PySide6.QtGui import (
+    QColor,
+    QGuiApplication,
+    QKeyEvent,
+    QPainter,
+    QPixmap,
+    QTransform,
+)
+from PySide6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QGraphicsPixmapItem,
+    QGraphicsScene,
+    QGraphicsView,
+    QWidget,
+)
 
+from desktop_pet.animation import BlinkScheduler, BreathingAnimation, SwayAnimation
 from desktop_pet.core.paths import get_placeholder_sprite_path
 
 logger = logging.getLogger("desktop_pet.ui.pet_window")
@@ -107,14 +130,17 @@ class PetWindow(QWidget):
     ) -> None:
         super().__init__(parent)
 
-        self._elapsed_seconds = 0.0
         self._base_y: int | None = None
         self._target_size = target_size
         self._fallback_sprite_path = fallback_sprite_path or get_placeholder_sprite_path()
 
+        self._breathing = BreathingAnimation()
+        self._blink = BlinkScheduler()
+        self._sway = SwayAnimation()
+
         self._configure_window_flags()
         pixmap = self._load_sprite_with_fallback(sprite_path)
-        self._sprite_label = self._build_sprite_label(pixmap)
+        self._scene, self._view, self._sprite_item = self._build_sprite_view(pixmap)
         self._position_window()
 
     # -- setup -----------------------------------------------------------
@@ -159,14 +185,40 @@ class PetWindow(QWidget):
         )
         return _create_emergency_pixmap(self._target_size)
 
-    def _build_sprite_label(self, pixmap: QPixmap) -> QLabel:
-        label = QLabel(self)
-        label.setPixmap(pixmap)
-        label.setAlignment(Qt.AlignCenter)
-        label.setGeometry(0, 0, self._target_size, self._target_size)
-        label.setAttribute(Qt.WA_TranslucentBackground, True)
+    def _build_sprite_view(
+        self, pixmap: QPixmap
+    ) -> tuple[QGraphicsScene, QGraphicsView, QGraphicsPixmapItem]:
+        """Build the transparent QGraphicsView/Scene/PixmapItem stack.
+
+        The pixmap item's local origin is shifted to its own center
+        (via ``setOffset``), so that later applying a rotation/scale
+        ``QTransform`` to the item — done every frame in ``advance()``
+        — naturally pivots around the sprite's visual center rather
+        than its top-left corner.
+        """
+        scene = QGraphicsScene(0, 0, self._target_size, self._target_size)
+
+        item = QGraphicsPixmapItem(pixmap)
+        item.setTransformationMode(Qt.SmoothTransformation)
+        item.setOffset(-pixmap.width() / 2, -pixmap.height() / 2)
+        item.setPos(self._target_size / 2, self._target_size / 2)
+        scene.addItem(item)
+
+        view = QGraphicsView(scene, self)
+        view.setGeometry(0, 0, self._target_size, self._target_size)
+        view.setFrameShape(QFrame.NoFrame)
+        view.setStyleSheet("background: transparent; border: none;")
+        view.setAttribute(Qt.WA_TranslucentBackground, True)
+        view.setAttribute(Qt.WA_NoSystemBackground, True)
+        view.viewport().setAttribute(Qt.WA_TranslucentBackground, True)
+        view.viewport().setAutoFillBackground(False)
+        view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        view.setRenderHint(QPainter.Antialiasing, True)
+        view.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
         self.resize(self._target_size, self._target_size)
-        return label
+        return scene, view, item
 
     def _position_window(self) -> None:
         screen = QGuiApplication.primaryScreen()
@@ -179,22 +231,27 @@ class PetWindow(QWidget):
     # -- per-frame update --------------------------------------------------
 
     def advance(self, delta_time: float) -> None:
-        """Called once per tick by the GameLoop.
+        """Called once per tick by the GameLoop (60 FPS).
 
-        Phase 2 scope: a small sinusoidal bob, purely to make the 60 FPS
-        loop visible on screen and to give later phases (animation,
-        physics) a callback to replace. It is real, working motion —
-        not a stub — just intentionally simple for this phase.
+        Advances all three idle animations and applies their current
+        values: breathing moves the whole window a few pixels
+        vertically; blink and sway are combined into a single
+        transform (squash + rotation) applied to the sprite item, both
+        pivoting around its center thanks to the offset set up in
+        ``_build_sprite_view``.
         """
-        self._elapsed_seconds += delta_time
-        if self._base_y is None:
-            return
-        bob_amplitude_px = 6
-        bob_speed_radians_per_sec = 2.0
-        offset = round(
-            bob_amplitude_px * math.sin(self._elapsed_seconds * bob_speed_radians_per_sec)
-        )
-        self.move(self.x(), self._base_y + offset)
+        self._breathing.advance(delta_time)
+        self._blink.advance(delta_time)
+        self._sway.advance(delta_time)
+
+        if self._base_y is not None:
+            offset = round(self._breathing.offset_px)
+            self.move(self.x(), self._base_y + offset)
+
+        transform = QTransform()
+        transform.rotate(self._sway.tilt_degrees)
+        transform.scale(1.0, self._blink.scale_y)
+        self._sprite_item.setTransform(transform)
 
     # -- input ---------------------------------------------------------
 

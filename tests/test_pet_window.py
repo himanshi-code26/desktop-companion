@@ -34,7 +34,7 @@ def test_missing_primary_sprite_falls_back_to_placeholder(qtbot, tmp_path) -> No
     window = PetWindow(tmp_path / "does_not_exist.png")
     qtbot.addWidget(window)
 
-    pixmap = window._sprite_label.pixmap()
+    pixmap = window._sprite_item.pixmap()
     assert pixmap is not None
     assert not pixmap.isNull()
 
@@ -61,6 +61,18 @@ def test_window_has_translucent_background(qtbot, sprite_path) -> None:
     window = PetWindow(sprite_path)
     qtbot.addWidget(window)
     assert window.testAttribute(Qt.WA_TranslucentBackground) is True
+
+
+def test_sprite_view_is_also_translucent(qtbot, sprite_path) -> None:
+    """The sprite is now rendered via an internal QGraphicsView, which
+    needs its own translucency attributes - the top-level window being
+    translucent alone isn't enough."""
+    window = PetWindow(sprite_path)
+    qtbot.addWidget(window)
+
+    assert window._view.testAttribute(Qt.WA_TranslucentBackground) is True
+    assert window._view.viewport().testAttribute(Qt.WA_TranslucentBackground) is True
+    assert window._view.viewport().autoFillBackground() is False
 
 
 def test_window_size_matches_configured_target_size(qtbot, sprite_path) -> None:
@@ -93,16 +105,75 @@ def test_escape_key_quits_application(qtbot, sprite_path, qapp) -> None:
     assert quit_calls == [True]
 
 
-def test_advance_moves_window_around_base_y(qtbot, sprite_path) -> None:
+def test_advance_moves_window_within_breathing_amplitude(qtbot, sprite_path) -> None:
+    """Requirement: breathing is a small (2-4px) vertical movement."""
     window = PetWindow(sprite_path)
     qtbot.addWidget(window)
     base_y = window._base_y
 
-    window.advance(0.25)
-    assert abs(window.y() - base_y) <= 6
+    max_deviation = 0.0
+    for _ in range(240):  # a couple of full breathing cycles at 60fps
+        window.advance(1 / 60)
+        max_deviation = max(max_deviation, abs(window.y() - base_y))
+
+    assert max_deviation <= 4.0
 
 
-# -- new tests: PNG loading, invalid image fallback, transparency ---------
+# -- idle animation wiring -------------------------------------------------
+
+
+def test_blink_squashes_sprite_item_transform(qtbot, sprite_path) -> None:
+    """A single large advance() step is guaranteed to land inside a
+    blink (max wait is 10s), so this is a fast, deterministic way to
+    confirm blinking actually reaches the rendered sprite item."""
+    window = PetWindow(sprite_path)
+    qtbot.addWidget(window)
+
+    window.advance(11.0)  # exceeds the 4-10s max blink wait
+
+    assert window._blink.is_blinking is True
+    transform = window._sprite_item.transform()
+    assert transform.m22() == pytest.approx(window._blink.scale_y)
+    assert transform.m22() < 1.0
+
+
+def test_sway_rotates_sprite_item_transform(qtbot, sprite_path) -> None:
+    """A single large advance() step is guaranteed to land inside a
+    sway (max wait is 20s). The tilt eases in from 0 at the exact
+    trigger instant, so a small follow-up step is needed to observe it
+    mid-ease, where it's virtually certain to be non-zero."""
+    window = PetWindow(sprite_path)
+    qtbot.addWidget(window)
+
+    window.advance(20.5)  # exceeds the 8-20s max sway wait; triggers a sway
+    assert window._sway.is_swaying is True
+
+    window.advance(0.3)  # step partway into the ease-in
+    assert window._sway.is_swaying is True
+    assert window._sway.tilt_degrees != 0.0
+
+    transform = window._sprite_item.transform()
+    # A pure rotation changes the off-diagonal matrix elements away
+    # from the identity's (m12=0, m21=0).
+    assert (transform.m12(), transform.m21()) != (0.0, 0.0)
+
+
+def test_idle_animations_never_exceed_their_bounds_over_time(qtbot, sprite_path) -> None:
+    """Runs a longer simulated stretch (well beyond any single wait
+    range) and checks every animation stays within its documented
+    bounds throughout - a smoke test against jitter/overshoot."""
+    window = PetWindow(sprite_path)
+    qtbot.addWidget(window)
+    base_y = window._base_y
+
+    for _ in range(60 * 30):  # 30 simulated seconds at 60fps
+        window.advance(1 / 60)
+        assert abs(window.y() - base_y) <= 4.0
+        assert 0.0 < window._blink.scale_y <= 1.0
+        assert abs(window._sway.tilt_degrees) <= 3.0001
+
+
+# -- PNG loading, invalid image fallback, transparency ---------------------
 
 
 def test_successful_png_loading_preserves_aspect_ratio(qtbot, tmp_path) -> None:
@@ -114,13 +185,13 @@ def test_successful_png_loading_preserves_aspect_ratio(qtbot, tmp_path) -> None:
     window = PetWindow(sprite_file)
     qtbot.addWidget(window)
 
-    pixmap = window._sprite_label.pixmap()
+    pixmap = window._sprite_item.pixmap()
     assert not pixmap.isNull()
     # 200x100 fit within 128x128 preserving a 2:1 aspect ratio -> 128x64.
     assert pixmap.width() == DEFAULT_SPRITE_SIZE
     assert pixmap.height() == DEFAULT_SPRITE_SIZE // 2
     # The window itself still matches the configured target size, with
-    # the (now-narrower) sprite centered inside it by the label.
+    # the (now-narrower) sprite centered inside it.
     assert window.width() == DEFAULT_SPRITE_SIZE
     assert window.height() == DEFAULT_SPRITE_SIZE
 
@@ -135,7 +206,7 @@ def test_invalid_image_falls_back_without_crashing(qtbot, tmp_path, caplog) -> N
         window = PetWindow(corrupt_file)
     qtbot.addWidget(window)
 
-    pixmap = window._sprite_label.pixmap()
+    pixmap = window._sprite_item.pixmap()
     assert pixmap is not None
     assert not pixmap.isNull()
     assert any("Could not load pet sprite" in message for message in caplog.messages)
@@ -153,7 +224,7 @@ def test_all_candidates_failing_uses_emergency_pixmap_without_crashing(
         window = PetWindow(missing_primary, fallback_sprite_path=missing_fallback)
     qtbot.addWidget(window)
 
-    pixmap = window._sprite_label.pixmap()
+    pixmap = window._sprite_item.pixmap()
     assert not pixmap.isNull()
     assert pixmap.width() == DEFAULT_SPRITE_SIZE
     assert pixmap.height() == DEFAULT_SPRITE_SIZE
@@ -177,7 +248,7 @@ def test_transparency_is_preserved(qtbot, tmp_path) -> None:
     window = PetWindow(sprite_file)
     qtbot.addWidget(window)
 
-    pixmap = window._sprite_label.pixmap()
+    pixmap = window._sprite_item.pixmap()
     assert pixmap.hasAlphaChannel()
 
     result_image = pixmap.toImage()
