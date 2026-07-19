@@ -6,12 +6,14 @@ sets this — see .github/workflows/ci.yml).
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from PySide6.QtCore import QEvent, Qt
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtGui import QColor, QImage, QKeyEvent
 
 from desktop_pet.core.paths import get_assets_dir
-from desktop_pet.ui.pet_window import PetWindow
+from desktop_pet.ui.pet_window import DEFAULT_SPRITE_SIZE, PetWindow
 
 
 @pytest.fixture
@@ -19,9 +21,22 @@ def sprite_path():
     return get_assets_dir() / "sprites" / "placeholder_pet.png"
 
 
-def test_missing_sprite_raises_file_not_found(tmp_path) -> None:
-    with pytest.raises(FileNotFoundError):
-        PetWindow(tmp_path / "does_not_exist.png")
+def _write_test_png(path, width: int, height: int, fill_argb: tuple[int, int, int, int]) -> None:
+    """Write a solid-color PNG of the given size and RGBA fill to disk."""
+    image = QImage(width, height, QImage.Format_ARGB32)
+    image.fill(QColor(*fill_argb))
+    assert image.save(str(path), "PNG")
+
+
+def test_missing_primary_sprite_falls_back_to_placeholder(qtbot, tmp_path) -> None:
+    """Requirement: a missing sprite must never crash the app - it should
+    fall back to the built-in placeholder instead."""
+    window = PetWindow(tmp_path / "does_not_exist.png")
+    qtbot.addWidget(window)
+
+    pixmap = window._sprite_label.pixmap()
+    assert pixmap is not None
+    assert not pixmap.isNull()
 
 
 def test_window_is_frameless_and_always_on_top(qtbot, sprite_path) -> None:
@@ -48,11 +63,21 @@ def test_window_has_translucent_background(qtbot, sprite_path) -> None:
     assert window.testAttribute(Qt.WA_TranslucentBackground) is True
 
 
-def test_window_size_matches_sprite(qtbot, sprite_path) -> None:
+def test_window_size_matches_configured_target_size(qtbot, sprite_path) -> None:
+    """Requirement: the window resizes itself to match the sprite size,
+    i.e. the configured target size (128x128 by default)."""
     window = PetWindow(sprite_path)
     qtbot.addWidget(window)
-    assert window.width() > 0
-    assert window.height() > 0
+    assert window.width() == DEFAULT_SPRITE_SIZE
+    assert window.height() == DEFAULT_SPRITE_SIZE
+
+
+def test_custom_target_size_resizes_window(qtbot, sprite_path) -> None:
+    """Requirement: the default size must be configurable from one place."""
+    window = PetWindow(sprite_path, target_size=64)
+    qtbot.addWidget(window)
+    assert window.width() == 64
+    assert window.height() == 64
 
 
 def test_escape_key_quits_application(qtbot, sprite_path, qapp) -> None:
@@ -75,3 +100,91 @@ def test_advance_moves_window_around_base_y(qtbot, sprite_path) -> None:
 
     window.advance(0.25)
     assert abs(window.y() - base_y) <= 6
+
+
+# -- new tests: PNG loading, invalid image fallback, transparency ---------
+
+
+def test_successful_png_loading_preserves_aspect_ratio(qtbot, tmp_path) -> None:
+    """A valid, non-square PNG must be scaled to fit inside the target
+    box without being stretched into a square."""
+    sprite_file = tmp_path / "wide_sprite.png"
+    _write_test_png(sprite_file, width=200, height=100, fill_argb=(255, 0, 0, 255))
+
+    window = PetWindow(sprite_file)
+    qtbot.addWidget(window)
+
+    pixmap = window._sprite_label.pixmap()
+    assert not pixmap.isNull()
+    # 200x100 fit within 128x128 preserving a 2:1 aspect ratio -> 128x64.
+    assert pixmap.width() == DEFAULT_SPRITE_SIZE
+    assert pixmap.height() == DEFAULT_SPRITE_SIZE // 2
+    # The window itself still matches the configured target size, with
+    # the (now-narrower) sprite centered inside it by the label.
+    assert window.width() == DEFAULT_SPRITE_SIZE
+    assert window.height() == DEFAULT_SPRITE_SIZE
+
+
+def test_invalid_image_falls_back_without_crashing(qtbot, tmp_path, caplog) -> None:
+    """A corrupt/invalid PNG must never crash the app - it should log a
+    warning and fall back to the placeholder sprite instead."""
+    corrupt_file = tmp_path / "corrupt.png"
+    corrupt_file.write_bytes(b"this is not a valid png file")
+
+    with caplog.at_level(logging.WARNING, logger="desktop_pet.ui.pet_window"):
+        window = PetWindow(corrupt_file)
+    qtbot.addWidget(window)
+
+    pixmap = window._sprite_label.pixmap()
+    assert pixmap is not None
+    assert not pixmap.isNull()
+    assert any("Could not load pet sprite" in message for message in caplog.messages)
+
+
+def test_all_candidates_failing_uses_emergency_pixmap_without_crashing(
+    qtbot, tmp_path, caplog
+) -> None:
+    """Even if both the primary sprite and the placeholder fail to load,
+    the window must still open rather than crash."""
+    missing_primary = tmp_path / "missing_primary.png"
+    missing_fallback = tmp_path / "missing_fallback.png"
+
+    with caplog.at_level(logging.WARNING, logger="desktop_pet.ui.pet_window"):
+        window = PetWindow(missing_primary, fallback_sprite_path=missing_fallback)
+    qtbot.addWidget(window)
+
+    pixmap = window._sprite_label.pixmap()
+    assert not pixmap.isNull()
+    assert pixmap.width() == DEFAULT_SPRITE_SIZE
+    assert pixmap.height() == DEFAULT_SPRITE_SIZE
+    assert any("emergency sprite" in message for message in caplog.messages)
+
+
+def test_transparency_is_preserved(qtbot, tmp_path) -> None:
+    """Requirement: transparency in the source PNG must survive loading
+    and scaling, not get flattened onto an opaque background."""
+    sprite_file = tmp_path / "transparent_sprite.png"
+
+    size = 64
+    image = QImage(size, size, QImage.Format_ARGB32)
+    image.fill(QColor(0, 0, 0, 0))  # fully transparent
+    center_margin = size // 4
+    for x in range(center_margin, size - center_margin):
+        for y in range(center_margin, size - center_margin):
+            image.setPixelColor(x, y, QColor(0, 200, 0, 255))  # opaque center
+    assert image.save(str(sprite_file), "PNG")
+
+    window = PetWindow(sprite_file)
+    qtbot.addWidget(window)
+
+    pixmap = window._sprite_label.pixmap()
+    assert pixmap.hasAlphaChannel()
+
+    result_image = pixmap.toImage()
+    corner_alpha = result_image.pixelColor(1, 1).alpha()
+    center_alpha = result_image.pixelColor(
+        result_image.width() // 2, result_image.height() // 2
+    ).alpha()
+
+    assert corner_alpha == 0
+    assert center_alpha == 255

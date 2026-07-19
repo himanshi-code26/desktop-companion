@@ -3,7 +3,7 @@
   "window": {
     "always_on_top": true,
     "transparency": 1.0,
-    "size_scale": 1.0,
+    "size_scale": 2.5,
     "start_x": null,
     "start_y": null
   },

@@ -6,12 +6,25 @@ Composition root for the application. Creates the QApplication,
 resolves which sprite to display, wires the GameLoop to the PetWindow,
 and runs the Qt event loop.
 
-Sprite resolution: if the user has placed a custom sprite at
-``assets/sprites/user_pet.png``, it is used instead of the generated
-placeholder. This lets someone drop in their own image with zero code
-changes — no config editing required for Phase 2. A proper, declarative
-"active pet" system (reading ``config/default_config.json``'s
-``pet.active_pet`` key and a full plugin folder) arrives in Phase 8.
+Sprite resolution: the first PNG (alphabetically) found in
+``assets/pets/default/`` is used as the pet's sprite. This lets someone
+drop their own sticker into that folder with zero code changes — no
+config editing required. If that folder is empty or missing, the
+generated placeholder is used instead. A proper, declarative "active
+pet" system (reading ``config/default_config.json``'s ``pet.active_pet``
+key and a full plugin folder) arrives in Phase 8.
+
+Note that this module only *resolves a path* — it does not validate
+that the chosen PNG can actually be decoded. That validation, and the
+fallback if decoding fails, is ``PetWindow``'s responsibility (see
+``ui.pet_window``), since it already owns image loading and is where a
+decode failure is naturally discovered.
+
+Sizing: ``config/default_config.json``'s ``window.size_scale`` is
+applied to ``PetWindow.DEFAULT_SPRITE_SIZE`` to get the sprite's actual
+target size (1.0 = default size, 2.0 = double, 0.5 = half). Aspect
+ratio and smooth scaling are still handled entirely by ``PetWindow`` —
+this module just computes *how big*, not *how*.
 """
 
 from __future__ import annotations
@@ -22,24 +35,57 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
+from desktop_pet.core.config import get_size_scale
 from desktop_pet.core.loop import GameLoop
-from desktop_pet.core.paths import get_assets_dir
-from desktop_pet.ui.pet_window import PetWindow
+from desktop_pet.core.paths import get_assets_dir, get_placeholder_sprite_path
+from desktop_pet.ui.pet_window import DEFAULT_SPRITE_SIZE, PetWindow
 
 logger = logging.getLogger("desktop_pet.core.app")
 
 
-def resolve_sprite_path() -> Path:
-    """Prefer a user-supplied sprite over the generated placeholder."""
-    sprites_dir = get_assets_dir() / "sprites"
-    user_sprite = sprites_dir / "user_pet.png"
-    if user_sprite.exists():
-        logger.info("Using custom sprite: %s", user_sprite)
-        return user_sprite
+def _discover_default_pet_sprite() -> Path | None:
+    """Return the first PNG (alphabetically) in assets/pets/default/.
 
-    placeholder_sprite = sprites_dir / "placeholder_pet.png"
-    logger.info("No custom sprite found, using placeholder: %s", placeholder_sprite)
+    Returns ``None`` if that directory doesn't exist or contains no
+    ``.png`` files, so the caller can fall back to the placeholder.
+    """
+    default_pet_dir = get_assets_dir() / "pets" / "default"
+    if not default_pet_dir.is_dir():
+        return None
+
+    png_files = sorted(default_pet_dir.glob("*.png"))
+    return png_files[0] if png_files else None
+
+
+def resolve_sprite_path() -> Path:
+    """Resolve which PNG to use for the pet sprite.
+
+    Preference order:
+
+    1. The first PNG (alphabetically) found in ``assets/pets/default/``
+    2. The generated placeholder sprite
+    """
+    discovered = _discover_default_pet_sprite()
+    if discovered is not None:
+        logger.info("Using pet sprite from assets/pets/default/: %s", discovered)
+        return discovered
+
+    placeholder_sprite = get_placeholder_sprite_path()
+    logger.info(
+        "No PNG found in assets/pets/default/, using placeholder: %s",
+        placeholder_sprite,
+    )
     return placeholder_sprite
+
+
+def _compute_target_size(size_scale: float) -> int:
+    """Apply ``size_scale`` to the sprite's default target size.
+
+    ``size_scale = 1.0`` reproduces ``DEFAULT_SPRITE_SIZE`` exactly;
+    ``2.0`` doubles it; ``0.5`` halves it. Rounded to the nearest whole
+    pixel, since widget/pixmap dimensions must be integers.
+    """
+    return round(DEFAULT_SPRITE_SIZE * size_scale)
 
 
 class Application:
@@ -51,7 +97,12 @@ class Application:
         self._qt_app.setQuitOnLastWindowClosed(True)
 
         sprite_path = resolve_sprite_path()
-        self._window = PetWindow(sprite_path)
+        target_size = _compute_target_size(get_size_scale())
+        self._window = PetWindow(
+            sprite_path,
+            fallback_sprite_path=get_placeholder_sprite_path(),
+            target_size=target_size,
+        )
 
         self._loop = GameLoop(target_fps=60)
         self._loop.subscribe(self._window.advance)

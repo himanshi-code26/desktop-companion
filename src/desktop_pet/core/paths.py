@@ -42,3 +42,15 @@ def get_assets_dir() -> Path:
 def get_config_dir() -> Path:
     """Return the config/ directory at the project root."""
     return get_project_root() / "config"
+
+
+def get_placeholder_sprite_path() -> Path:
+    """Return the path to the built-in, generated placeholder sprite.
+
+    This is the last resort ``PetWindow`` falls back to if the
+    configured pet sprite can't be loaded (missing file, corrupt PNG,
+    etc.) — see ``ui.pet_window.PetWindow``. Keeping the path in one
+    place avoids the same literal string being duplicated across
+    ``core.app`` and ``ui.pet_window``.
+    """
+    return get_assets_dir() / "sprites" / "placeholder_pet.png"

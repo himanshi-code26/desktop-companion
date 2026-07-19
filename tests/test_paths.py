@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from desktop_pet.core.paths import get_assets_dir, get_config_dir, get_project_root
+from desktop_pet.core.paths import (
+    get_assets_dir,
+    get_config_dir,
+    get_placeholder_sprite_path,
+    get_project_root,
+)
 
 
 def test_get_project_root_contains_pyproject_toml() -> None:
@@ -26,3 +31,7 @@ def test_placeholder_sprite_exists() -> None:
     assert sprite.exists(), (
         "Run `python scripts/generate_placeholder_asset.py` to generate it."
     )
+
+
+def test_get_placeholder_sprite_path_matches_known_location() -> None:
+    assert get_placeholder_sprite_path() == get_assets_dir() / "sprites" / "placeholder_pet.png"
