@@ -39,9 +39,6 @@ from desktop_pet.ai.state_machine import (
     FollowCursorState,
     DraggedState,
     ThrownState,
-    HappyState,
-    LegSwingState,
-    HugState,
 )
 
 logger = logging.getLogger("desktop_pet.ai.behavior_engine")
