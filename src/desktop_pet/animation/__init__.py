@@ -10,4 +10,4 @@ be added here in a later phase.
 
 from desktop_pet.animation.idle import BlinkScheduler, BreathingAnimation, SwayAnimation
 
-__all__ = ["BreathingAnimation", "BlinkScheduler", "SwayAnimation"]
+__all__ = ["BlinkScheduler", "BreathingAnimation", "SwayAnimation"]

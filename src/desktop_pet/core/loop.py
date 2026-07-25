@@ -12,9 +12,9 @@ if a frame is delayed.
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
-from PySide6.QtCore import QElapsedTimer, QTimer, Qt
+from PySide6.QtCore import QElapsedTimer, Qt, QTimer
 
 FrameCallback = Callable[[float], None]
 

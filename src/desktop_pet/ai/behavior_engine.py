@@ -28,17 +28,17 @@ from desktop_pet.ai.event_bus import EventBus
 from desktop_pet.ai.events import Event, EventType
 from desktop_pet.ai.state import PetState
 from desktop_pet.ai.state_machine import (
-    StateMachine,
+    DraggedState,
+    FollowCursorState,
     IdleState,
-    WalkState,
+    JumpState,
+    ReadState,
     RunState,
     SleepState,
-    ReadState,
-    JumpState,
-    WaveState,
-    FollowCursorState,
-    DraggedState,
+    StateMachine,
     ThrownState,
+    WalkState,
+    WaveState,
 )
 
 logger = logging.getLogger("desktop_pet.ai.behavior_engine")

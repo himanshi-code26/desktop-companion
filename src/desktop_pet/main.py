@@ -52,7 +52,8 @@ import os
 import sys
 from dataclasses import dataclass
 from importlib import import_module
-from importlib.metadata import PackageNotFoundError, version as pkg_version
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as pkg_version
 
 MIN_PYTHON = (3, 11)
 
