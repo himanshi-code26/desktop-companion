@@ -351,3 +351,100 @@ def test_transparency_is_preserved(qtbot, tmp_path) -> None:
 
     assert corner_alpha == 0
     assert center_alpha == 255
+
+
+def test_no_event_bus_means_no_ai_coupling(qtbot, sprite_path) -> None:
+    """Requirement: omitting event_bus must behave exactly as before Phase 7."""
+    window = PetWindow(sprite_path)
+    qtbot.addWidget(window)
+
+    for _ in range(10):
+        window.advance(1 / 60)  # No exception means success.
+
+    assert window._event_bus is None
+    assert window._current_ai_state is None
+
+
+def test_publishes_cursor_interest_changed_on_engagement(qtbot, sprite_path) -> None:
+    from desktop_pet.ai import Event, EventBus, EventType
+
+    event_bus = EventBus()
+    received: list[Event] = []
+    event_bus.subscribe(EventType.CURSOR_INTEREST_CHANGED, received.append)
+
+    provider = _RelativeCursorProvider(offset_x=50, offset_y=0)  # zone A: <180px
+    window = PetWindow(sprite_path, cursor_position_provider=provider, event_bus=event_bus)
+    provider.window = window
+    qtbot.addWidget(window)
+
+    for _ in range(10):
+        window.advance(1 / 60)
+
+    assert len(received) == 1
+    assert received[0].payload == {"is_interested": True}
+
+
+def test_does_not_republish_cursor_interest_every_frame(qtbot, sprite_path) -> None:
+    from desktop_pet.ai import Event, EventBus, EventType
+
+    event_bus = EventBus()
+    received: list[Event] = []
+    event_bus.subscribe(EventType.CURSOR_INTEREST_CHANGED, received.append)
+
+    provider = _RelativeCursorProvider(offset_x=50, offset_y=0)
+    window = PetWindow(sprite_path, cursor_position_provider=provider, event_bus=event_bus)
+    provider.window = window
+    qtbot.addWidget(window)
+
+    for _ in range(120):  # 2 seconds - stays engaged throughout
+        window.advance(1 / 60)
+
+    assert len(received) == 1  # only the single on-edge publish
+
+
+def test_cursor_tilt_is_suppressed_during_interruptible_ai_state(qtbot, sprite_path) -> None:
+    from desktop_pet.ai import Event, EventBus, EventType, PetState
+
+    event_bus = EventBus()
+    provider = _RelativeCursorProvider(offset_x=50, offset_y=0)  # zone A: <180px
+    window = PetWindow(sprite_path, cursor_position_provider=provider, event_bus=event_bus)
+    provider.window = window
+    qtbot.addWidget(window)
+
+    event_bus.publish(
+        Event(EventType.STATE_CHANGED, {"previous_state": PetState.IDLE, "new_state": PetState.SLEEP})
+    )
+
+    for _ in range(120):  # 2 seconds - long enough for attention to fully engage
+        window.advance(1 / 60)
+
+    # The underlying model still reports interest (it's still computed
+    # every frame), but the rendered rotation must not include it.
+    assert window._cursor_attention.is_interested is True
+    transform = window._sprite_item.transform()
+    assert (transform.m12(), transform.m21()) == (0.0, 0.0)
+
+
+def test_cursor_tilt_resumes_once_state_returns_to_idle(qtbot, sprite_path) -> None:
+    from desktop_pet.ai import Event, EventBus, EventType, PetState
+
+    event_bus = EventBus()
+    provider = _RelativeCursorProvider(offset_x=50, offset_y=0)
+    window = PetWindow(sprite_path, cursor_position_provider=provider, event_bus=event_bus)
+    provider.window = window
+    qtbot.addWidget(window)
+
+    event_bus.publish(
+        Event(EventType.STATE_CHANGED, {"previous_state": PetState.IDLE, "new_state": PetState.SLEEP})
+    )
+    for _ in range(60):
+        window.advance(1 / 60)
+
+    event_bus.publish(
+        Event(EventType.STATE_CHANGED, {"previous_state": PetState.SLEEP, "new_state": PetState.IDLE})
+    )
+    for _ in range(60):
+        window.advance(1 / 60)
+
+    transform = window._sprite_item.transform()
+    assert (transform.m12(), transform.m21()) != (0.0, 0.0)

@@ -39,30 +39,13 @@ abrupt hand-off discontinuity the moment attention starts or stops —
 there's no instant in time where the rendered rotation has to jump
 from "whatever sway was doing" to "whatever attention is doing" or
 back; it's already a single continuous value.
-
-AI integration (Phase 7): an optional ``event_bus`` can be supplied so
-this window can participate in the autonomous-behaviour system without
-containing any of its decision logic. Two things happen if (and only
-if) one is given:
-
-- Every frame, this window relays ``CursorAttention.is_interested`` as
-  an ``EventType.CURSOR_INTEREST_CHANGED`` event whenever it flips —
-  this is a plain sensor-data relay (this window is the only thing
-  that knows the live cursor and window position), not a behavioural
-  decision. ``ai.autonomy.AutonomyController`` is what decides what to
-  do with that signal (interrupting sleep/reading/leg-swing).
-- This window tracks the AI's current state via
-  ``EventType.STATE_CHANGED`` purely so it can suppress the cursor-tilt
-  rotation while an interruptible behaviour is active (see
-  ``ai.autonomy.INTERRUPTIBLE_BEHAVIOR_STATES``) — cursor awareness is
-  meant to "take over" only once the pet is back in ``IDLE``.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from pathlib import Path
+from typing import Callable
 
 from PySide6.QtCore import QPoint, QRectF, Qt
 from PySide6.QtGui import (
@@ -83,8 +66,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from desktop_pet.ai import Event, EventBus, EventType, PetState
-from desktop_pet.ai.autonomy import INTERRUPTIBLE_BEHAVIOR_STATES
 from desktop_pet.animation import BlinkScheduler, BreathingAnimation, SwayAnimation
 from desktop_pet.behavior import CursorAttention
 from desktop_pet.core.paths import get_placeholder_sprite_path
@@ -161,7 +142,6 @@ class PetWindow(QWidget):
         target_size: int = DEFAULT_SPRITE_SIZE,
         parent: QWidget | None = None,
         cursor_position_provider: Callable[[], QPoint] | None = None,
-        event_bus: EventBus | None = None,
     ) -> None:
         """
         Args:
@@ -177,12 +157,6 @@ class PetWindow(QWidget):
                 supply a fixed/fake cursor position instead of
                 depending on the real (and, in headless CI, undefined)
                 OS cursor.
-            event_bus: Optional shared ``ai.EventBus``. If given, this
-                window publishes ``CURSOR_INTEREST_CHANGED`` and reacts
-                to ``STATE_CHANGED`` as described in the module
-                docstring above. If omitted (the default), this window
-                behaves exactly as it did before Phase 7 - no AI
-                coupling at all.
         """
         super().__init__(parent)
 
@@ -195,12 +169,6 @@ class PetWindow(QWidget):
         self._blink = BlinkScheduler()
         self._sway = SwayAnimation()
         self._cursor_attention = CursorAttention()
-
-        self._event_bus = event_bus
-        self._current_ai_state: PetState | None = None
-        self._last_published_is_interested: bool | None = None
-        if self._event_bus is not None:
-            self._event_bus.subscribe(EventType.STATE_CHANGED, self._on_ai_state_changed)
 
         self._configure_window_flags()
         pixmap = self._load_sprite_with_fallback(sprite_path)
@@ -304,12 +272,6 @@ class PetWindow(QWidget):
         blink and the combined sway+attention rotation are applied as
         a single transform on the sprite item, pivoting around its
         center thanks to the offset set up in ``_build_sprite_view``.
-
-        If an ``event_bus`` was supplied, this also relays cursor
-        interest on/off edges as ``CURSOR_INTEREST_CHANGED`` events,
-        and suppresses the cursor-tilt contribution while the AI is in
-        an interruptible autonomous behaviour (sleep/read/leg-swing) -
-        see the module docstring.
         """
         self._breathing.advance(delta_time)
         self._blink.advance(delta_time)
@@ -325,46 +287,12 @@ class PetWindow(QWidget):
         self._cursor_attention.advance(
             delta_time, cursor_pos.x(), cursor_pos.y(), pet_center_x, pet_center_y
         )
-        self._publish_cursor_interest_if_changed()
 
-        cursor_tilt_degrees = (
-            0.0
-            if self._current_ai_state in INTERRUPTIBLE_BEHAVIOR_STATES
-            else self._cursor_attention.tilt_degrees
-        )
-        total_rotation_degrees = self._sway.tilt_degrees + cursor_tilt_degrees
+        total_rotation_degrees = self._sway.tilt_degrees + self._cursor_attention.tilt_degrees
         transform = QTransform()
         transform.rotate(total_rotation_degrees)
         transform.scale(1.0, self._blink.scale_y)
         self._sprite_item.setTransform(transform)
-
-    def _publish_cursor_interest_if_changed(self) -> None:
-        """Relay ``CursorAttention.is_interested`` on the shared event bus.
-
-        Publishes only on the rising/falling edge (not every frame),
-        and only if an ``event_bus`` was supplied — with none supplied,
-        this is a no-op and behavior is unchanged from before Phase 7.
-        This is pure sensor-data relay: this window makes no decision
-        about *what* an interest change should mean; that's
-        ``ai.autonomy.AutonomyController``'s job.
-        """
-        if self._event_bus is None:
-            return
-        is_interested = self._cursor_attention.is_interested
-        if is_interested == self._last_published_is_interested:
-            return
-        self._last_published_is_interested = is_interested
-        self._event_bus.publish(
-            Event(
-                EventType.CURSOR_INTEREST_CHANGED,
-                {"is_interested": is_interested},
-                source="pet_window",
-            )
-        )
-
-    def _on_ai_state_changed(self, event: Event) -> None:
-        """Track the AI's current state, purely to gate cursor-tilt rendering."""
-        self._current_ai_state = event.payload.get("new_state")
 
     # -- input ---------------------------------------------------------
 

@@ -25,6 +25,14 @@ applied to ``PetWindow.DEFAULT_SPRITE_SIZE`` to get the sprite's actual
 target size (1.0 = default size, 2.0 = double, 0.5 = half). Aspect
 ratio and smooth scaling are still handled entirely by ``PetWindow`` —
 this module just computes *how big*, not *how*.
+
+AI wiring (Phase 6 + Phase 7): this module builds one shared
+``ai.EventBus`` and hands it to ``BehaviorEngine``, ``AutonomyController``,
+and ``PetWindow`` so they can react to each other's events without
+importing one another directly. All the actual *decisions* about what
+the pet does live in ``ai.autonomy.AutonomyController`` — this module
+only wires the pieces together and ticks them every frame via
+``GameLoop``.
 """
 
 from __future__ import annotations
@@ -35,7 +43,9 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
-from desktop_pet.core.config import get_size_scale
+from desktop_pet.ai import BehaviorEngine, EventBus
+from desktop_pet.ai.autonomy import AutonomyController
+from desktop_pet.core.config import get_ai_config, get_behavior_config, get_size_scale
 from desktop_pet.core.loop import GameLoop
 from desktop_pet.core.paths import get_assets_dir, get_placeholder_sprite_path
 from desktop_pet.ui.pet_window import DEFAULT_SPRITE_SIZE, PetWindow
@@ -98,14 +108,41 @@ class Application:
 
         sprite_path = resolve_sprite_path()
         target_size = _compute_target_size(get_size_scale())
+
+        # AI foundation + autonomy (Phase 6 + Phase 7): a single EventBus
+        # is shared by the BehaviorEngine, the AutonomyController, and
+        # the window, so all three can stay decoupled from one another
+        # while still reacting to the same events (state changes,
+        # cursor-interest edges). BehaviorEngine only manages *safe*
+        # transitions; AutonomyController is what actually decides to
+        # start one on its own while idle.
+        event_bus = EventBus()
+        self._behavior_engine = BehaviorEngine(config=get_ai_config(), event_bus=event_bus)
+        self._autonomy = AutonomyController(
+            self._behavior_engine, config=get_behavior_config()
+        )
+
         self._window = PetWindow(
             sprite_path,
             fallback_sprite_path=get_placeholder_sprite_path(),
             target_size=target_size,
+            event_bus=event_bus,
         )
 
         self._loop = GameLoop(target_fps=60)
         self._loop.subscribe(self._window.advance)
+        self._loop.subscribe(self._behavior_engine.update)
+        self._loop.subscribe(self._autonomy.update)
+
+    @property
+    def behavior_engine(self) -> BehaviorEngine:
+        """The AI subsystem's ``BehaviorEngine``, for tests and later phases."""
+        return self._behavior_engine
+
+    @property
+    def autonomy(self) -> AutonomyController:
+        """The ``AutonomyController`` deciding autonomous behaviours, for tests."""
+        return self._autonomy
 
     def run(self) -> int:
         self._window.show()

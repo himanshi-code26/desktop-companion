@@ -3,7 +3,7 @@
   "window": {
     "always_on_top": true,
     "transparency": 1.0,
-    "size_scale": 4.0,
+    "size_scale": 1.0,
     "start_x": null,
     "start_y": null
   },
@@ -27,5 +27,8 @@
   "pet": {
     "active_pet": "default_cat",
     "active_skin": "default"
+  },
+  "ai": {
+    "initial_state": "idle"
   }
 }
