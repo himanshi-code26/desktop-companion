@@ -26,12 +26,16 @@ def test_get_config_dir_is_under_project_root() -> None:
     assert (config_dir / "default_config.json").exists()
 
 
-def test_placeholder_sprite_exists() -> None:
-    sprite = get_assets_dir() / "sprites" / "placeholder_pet.png"
-    assert sprite.exists(), (
-        "Run `python scripts/generate_placeholder_asset.py` to generate it."
+def test_default_pet_assets_exist() -> None:
+    assets = get_assets_dir()
+
+    assert (assets / "pets" / "default" / "sticker_boy.png").exists(), (
+        "Default pet image is missing."
     )
 
+    assert (assets / "sprites" / "spritesheet.png.png").exists(), (
+        "Default sprite sheet is missing."
+    )
 
 def test_get_placeholder_sprite_path_matches_known_location() -> None:
     assert get_placeholder_sprite_path() == get_assets_dir() / "sprites" / "placeholder_pet.png"

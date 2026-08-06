@@ -48,11 +48,14 @@ from __future__ import annotations
 import logging
 import random
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from desktop_pet.ai.behavior_engine import BehaviorEngine
 from desktop_pet.ai.events import Event, EventType
 from desktop_pet.ai.state import PetState
+
+if TYPE_CHECKING:
+    from desktop_pet.physics.walk_controller import WalkController
 
 logger = logging.getLogger("desktop_pet.ai.autonomy")
 
@@ -89,7 +92,15 @@ class BehaviorProfile:
 #: Built-in fallback profile for every autonomous behaviour. Duration
 #: ranges match the Phase 7 spec's examples; weights are 1.0 (equal
 #: chance) unless overridden by ``core.config.get_behavior_config``.
+#:
+#: WALK is special: its ``min/max_duration_seconds`` are never used
+#: because WalkController signals arrival itself (destination-driven,
+#: not timer-driven). The very long sentinel values simply prevent the
+#: autonomy timer from ending the walk before the pet arrives.
 DEFAULT_BEHAVIOR_PROFILES: dict[PetState, BehaviorProfile] = {
+    PetState.WALK: BehaviorProfile(
+        weight=3.0, min_duration_seconds=3600.0, max_duration_seconds=3600.0, interruptible=False
+    ),
     PetState.SLEEP: BehaviorProfile(
         weight=1.0, min_duration_seconds=30.0, max_duration_seconds=90.0, interruptible=True
     ),
@@ -128,6 +139,7 @@ INTERRUPTIBLE_BEHAVIOR_STATES: frozenset[PetState] = frozenset(
 #: configurable in this phase; duration ranges use the built-in
 #: defaults above.
 _WEIGHT_CONFIG_KEYS: dict[PetState, str] = {
+    PetState.WALK: "walk_probability",
     PetState.SLEEP: "sleep_probability",
     PetState.READ: "read_probability",
     PetState.WAVE: "wave_probability",
@@ -148,6 +160,7 @@ class AutonomyController:
         engine: BehaviorEngine,
         config: dict[str, Any] | None = None,
         rng: random.Random | None = None,
+        walk_controller: WalkController | None = None,
     ) -> None:
         """
         Args:
@@ -161,10 +174,19 @@ class AutonomyController:
                 is incomplete.
             rng: Optional ``random.Random`` for deterministic testing.
                 Defaults to a fresh, unseeded instance.
+            walk_controller: Optional ``WalkController`` for roaming
+                behaviour. When supplied and a ``WALK`` transition is
+                chosen, this controller is asked to pick a destination
+                and start the walk; arrival is detected each tick
+                instead of using the timed countdown. If ``None``,
+                ``WALK`` behaves like any other timed behaviour (the
+                FSM will still transition, but no window movement
+                occurs).
         """
         self._engine = engine
         self._config = config if config is not None else {}
         self._rng = rng if rng is not None else random.Random()
+        self._walk_controller: WalkController | None = walk_controller
 
         self._enabled = bool(self._config.get("enabled", True))
         self._min_idle_seconds, self._max_idle_seconds = self._resolve_idle_range()
@@ -266,6 +288,19 @@ class AutonomyController:
 
     def _begin_behavior(self, state_id: PetState) -> None:
         profile = self._profiles[state_id]
+
+        if state_id is PetState.WALK and self._walk_controller is not None:
+            # Walking is destination-driven: WalkController decides when
+            # it's over (arrival), not a timer countdown.  Set the timer
+            # sentinel to None so update() uses the arrival-detection path.
+            self._seconds_remaining_in_behavior = None
+            logger.info("Starting autonomous WALK behaviour.")
+            self._engine.request_transition(PetState.WALK)
+            # Destination is chosen by PetWindow (it owns screen geometry).
+            # WalkController.start_walk() will be called by PetWindow once
+            # it sees the WALK state via _on_ai_state_changed.
+            return
+
         duration = self._rng.uniform(profile.min_duration_seconds, profile.max_duration_seconds)
         self._seconds_remaining_in_behavior = duration
         logger.info("Starting autonomous behaviour %s for %.1fs.", state_id, duration)
@@ -315,6 +350,21 @@ class AutonomyController:
                 chosen = self._choose_behavior()
                 if chosen is not None:
                     self._begin_behavior(chosen)
+
+        elif self._engine.current_state is PetState.WALK:
+            # Walk completion is arrival-driven: WalkController.is_walking
+            # flips to False exactly when the pet reaches the destination.
+            # We poll it every tick so the return-to-IDLE is immediate.
+            if self._walk_controller is not None and not self._walk_controller.is_walking:
+                logger.info("Walk complete — returning to IDLE.")
+                self._engine.request_transition(PetState.IDLE)
+            # If no walk_controller, fall through to timer logic below.
+            elif self._walk_controller is None and self._seconds_remaining_in_behavior is not None:
+                self._seconds_remaining_in_behavior -= delta_time
+                if self._seconds_remaining_in_behavior <= 0:
+                    self._seconds_remaining_in_behavior = None
+                    self._engine.request_transition(PetState.IDLE)
+
         elif self._seconds_remaining_in_behavior is not None:
             self._seconds_remaining_in_behavior -= delta_time
             if self._seconds_remaining_in_behavior <= 0:

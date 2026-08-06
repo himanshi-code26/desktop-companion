@@ -48,6 +48,7 @@ from desktop_pet.ai.autonomy import AutonomyController
 from desktop_pet.core.config import get_ai_config, get_behavior_config, get_size_scale
 from desktop_pet.core.loop import GameLoop
 from desktop_pet.core.paths import get_assets_dir, get_placeholder_sprite_path
+from desktop_pet.physics.walk_controller import WalkController
 from desktop_pet.ui.pet_window import DEFAULT_SPRITE_SIZE, PetWindow
 
 logger = logging.getLogger("desktop_pet.core.app")
@@ -118,8 +119,15 @@ class Application:
         # start one on its own while idle.
         event_bus = EventBus()
         self._behavior_engine = BehaviorEngine(config=get_ai_config(), event_bus=event_bus)
+
+        behavior_config = get_behavior_config()
+        walk_speed = float(behavior_config.get("walk_speed_px_per_sec", 80.0))
+        self._walk_controller = WalkController(speed=walk_speed * size_scale)
+
         self._autonomy = AutonomyController(
-            self._behavior_engine, config=get_behavior_config()
+            self._behavior_engine,
+            config=behavior_config,
+            walk_controller=self._walk_controller,
         )
 
         self._window = PetWindow(
@@ -127,6 +135,7 @@ class Application:
             fallback_sprite_path=get_placeholder_sprite_path(),
             target_size=target_size,
             event_bus=event_bus,
+            walk_controller=self._walk_controller,
         )
 
         self._loop = GameLoop(target_fps=60)

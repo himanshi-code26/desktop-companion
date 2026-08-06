@@ -3,7 +3,7 @@
   "window": {
     "always_on_top": true,
     "transparency": 1.0,
-    "size_scale": 1.0,
+    "size_scale": 3.0,
     "start_x": null,
     "start_y": null
   },
@@ -17,7 +17,10 @@
     "personality": "friendly",
     "idle_frequency": 0.5,
     "cursor_interest": 0.6,
-    "follow_cursor_timeout_seconds": 20
+    "follow_cursor_timeout_seconds": 20,
+    "min_idle_seconds": 2.0,
+    "max_idle_seconds": 6.0,
+    "walk_speed_px_per_sec": 80.0
   },
   "audio": {
     "muted": false,

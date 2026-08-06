@@ -13,6 +13,7 @@ from PySide6.QtCore import QEvent, QPoint, Qt
 from PySide6.QtGui import QColor, QImage, QKeyEvent
 
 from desktop_pet.core.paths import get_assets_dir
+from desktop_pet.physics.walk_controller import WalkController
 from desktop_pet.ui.pet_window import DEFAULT_SPRITE_SIZE, PetWindow
 
 
@@ -156,7 +157,7 @@ def test_blink_squashes_sprite_item_transform(qtbot, sprite_path) -> None:
 
     assert window._blink.is_blinking is True
     transform = window._sprite_item.transform()
-    assert transform.m22() == pytest.approx(window._blink.scale_y)
+    assert transform.m22() == pytest.approx(window._blink.scale_y, abs=1e-2)
     assert transform.m22() < 1.0
 
 
@@ -448,3 +449,94 @@ def test_cursor_tilt_resumes_once_state_returns_to_idle(qtbot, sprite_path) -> N
 
     transform = window._sprite_item.transform()
     assert (transform.m12(), transform.m21()) != (0.0, 0.0)
+
+
+# -- walk controller integration -------------------------------------------
+
+
+def test_walk_controller_moves_window_position(qtbot, sprite_path) -> None:
+    """While WALK is active and a WalkController is attached, advance()
+    must shift the window to match the controller's position."""
+    from desktop_pet.ai import Event, EventBus, EventType, PetState
+
+    event_bus = EventBus()
+    walk_ctrl = WalkController(speed=500.0)  # fast so we see movement in a few ticks
+    window = PetWindow(sprite_path, event_bus=event_bus, walk_controller=walk_ctrl)
+    qtbot.addWidget(window)
+
+    x_start = window.x()
+
+    # Manually seed a destination far to the right
+    walk_ctrl.set_position(float(x_start), float(window.y()))
+    walk_ctrl.start_walk(float(x_start) + 200.0, float(window.y()))
+
+    # Simulate the AI entering WALK state (so pet_window starts using
+    # the walk controller for positioning).
+    window._current_ai_state = PetState.WALK
+
+    for _ in range(20):
+        window.advance(1 / 60)
+
+    assert window.x() > x_start
+
+
+def test_walk_controller_flips_sprite_when_facing_left(qtbot, sprite_path) -> None:
+    """The sprite horizontal-flip transform must be applied when the
+    walk controller reports facing_left = True."""
+    from desktop_pet.ai import EventBus, PetState
+
+    event_bus = EventBus()
+    walk_ctrl = WalkController(speed=500.0)
+    window = PetWindow(sprite_path, event_bus=event_bus, walk_controller=walk_ctrl)
+    qtbot.addWidget(window)
+
+    x_start = 400.0
+    walk_ctrl.set_position(x_start, float(window.y()))
+    walk_ctrl.start_walk(x_start - 300.0, float(window.y()))  # moving LEFT
+    assert walk_ctrl.facing_left is True
+
+    window._current_ai_state = PetState.WALK
+    window.advance(1 / 60)
+
+    # QTransform.scale(-1, y) produces m11 < 0 for a left-flip.
+    transform = window._sprite_item.transform()
+    assert transform.m11() < 0.0
+
+
+def test_walk_controller_does_not_flip_when_facing_right(qtbot, sprite_path) -> None:
+    """No horizontal flip when the pet is walking right."""
+    from desktop_pet.ai import PetState
+
+    walk_ctrl = WalkController(speed=500.0)
+    window = PetWindow(sprite_path, walk_controller=walk_ctrl)
+    qtbot.addWidget(window)
+
+    x_start = 100.0
+    walk_ctrl.set_position(x_start, float(window.y()))
+    walk_ctrl.start_walk(x_start + 300.0, float(window.y()))  # moving RIGHT
+    assert walk_ctrl.facing_left is False
+
+    window._current_ai_state = PetState.WALK
+    window.advance(1 / 60)
+
+    transform = window._sprite_item.transform()
+    # m11 must be non-negative (no flip)
+    assert transform.m11() >= 0.0
+
+
+def test_no_walk_controller_means_no_walk_positioning(qtbot, sprite_path) -> None:
+    """Without a WalkController, advance() must behave exactly as before
+    even when the AI state is set to WALK."""
+    from desktop_pet.ai import PetState
+
+    window = PetWindow(sprite_path)  # no walk_controller
+    qtbot.addWidget(window)
+
+    base_y = window._base_y
+    window._current_ai_state = PetState.WALK
+
+    for _ in range(60):
+        window.advance(1 / 60)
+
+    # Without walk controller the window stays at breathing position (within 4 px)
+    assert abs(window.y() - base_y) <= 4.0

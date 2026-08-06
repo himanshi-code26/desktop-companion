@@ -48,8 +48,12 @@ DEFAULT_BEHAVIOR_CONFIG: dict[str, Any] = {
     "cursor_interest": 0.6,
     "follow_cursor_timeout_seconds": 20,
     "enabled": True,
-    "min_idle_seconds": 15.0,
-    "max_idle_seconds": 45.0,
+    # Idle wait before the next autonomous behaviour (including walking).
+    # Defaulted to 2–6 s so roaming is visible immediately after launch.
+    "min_idle_seconds": 2.0,
+    "max_idle_seconds": 6.0,
+    # Walk speed in pixels per second (at size_scale=1.0 / 128 px sprite).
+    "walk_speed_px_per_sec": 80.0,
     "sleep_probability": 1.0,
     "read_probability": 1.0,
     "wave_probability": 1.0,

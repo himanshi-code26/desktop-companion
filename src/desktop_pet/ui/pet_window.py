@@ -88,6 +88,7 @@ from desktop_pet.ai.autonomy import INTERRUPTIBLE_BEHAVIOR_STATES
 from desktop_pet.animation import BlinkScheduler, BreathingAnimation, SwayAnimation
 from desktop_pet.behavior import CursorAttention
 from desktop_pet.core.paths import get_placeholder_sprite_path
+from desktop_pet.physics.walk_controller import WalkController
 
 logger = logging.getLogger("desktop_pet.ui.pet_window")
 
@@ -162,6 +163,7 @@ class PetWindow(QWidget):
         parent: QWidget | None = None,
         cursor_position_provider: Callable[[], QPoint] | None = None,
         event_bus: EventBus | None = None,
+        walk_controller: WalkController | None = None,
     ) -> None:
         """
         Args:
@@ -183,6 +185,13 @@ class PetWindow(QWidget):
                 docstring above. If omitted (the default), this window
                 behaves exactly as it did before Phase 7 - no AI
                 coupling at all.
+            walk_controller: Optional ``WalkController``. When given,
+                ``advance()`` uses it to determine the window's
+                position each frame while ``PetState.WALK`` is active,
+                and flips the sprite horizontally when the pet is
+                moving left. If ``None``, walk-related behaviour is
+                silently skipped and all existing idle behaviour is
+                unchanged.
         """
         super().__init__(parent)
 
@@ -201,6 +210,9 @@ class PetWindow(QWidget):
         self._last_published_is_interested: bool | None = None
         if self._event_bus is not None:
             self._event_bus.subscribe(EventType.STATE_CHANGED, self._on_ai_state_changed)
+
+        # Walk integration
+        self._walk_controller: WalkController | None = walk_controller
 
         self._configure_window_flags()
         pixmap = self._load_sprite_with_fallback(sprite_path)
@@ -291,6 +303,10 @@ class PetWindow(QWidget):
         y = geometry.y() + geometry.height() - self.height() - 40
         self.move(x, y)
         self._base_y = y
+        # Synchronise WalkController's internal position to where the
+        # window actually landed, so it never starts from (0, 0).
+        if self._walk_controller is not None:
+            self._walk_controller.set_position(float(x), float(y))
 
     # -- per-frame update --------------------------------------------------
 
@@ -305,6 +321,14 @@ class PetWindow(QWidget):
         a single transform on the sprite item, pivoting around its
         center thanks to the offset set up in ``_build_sprite_view``.
 
+        Walk integration: when a ``WalkController`` is present and the
+        AI is in ``PetState.WALK``, the window position is driven by
+        the walk controller rather than the breathing offset. Breathing
+        still ticks internally so it can resume smoothly the moment the
+        pet returns to IDLE. The sprite is additionally flipped
+        horizontally (``QTransform.scale(-1, 1)``) when the pet is
+        moving left.
+
         If an ``event_bus`` was supplied, this also relays cursor
         interest on/off edges as ``CURSOR_INTEREST_CHANGED`` events,
         and suppresses the cursor-tilt contribution while the AI is in
@@ -315,9 +339,35 @@ class PetWindow(QWidget):
         self._blink.advance(delta_time)
         self._sway.advance(delta_time)
 
-        if self._base_y is not None:
-            offset = round(self._breathing.offset_px)
-            self.move(self.x(), self._base_y + offset)
+        is_walking = (
+            self._walk_controller is not None
+            and self._current_ai_state is PetState.WALK
+        )
+
+        if is_walking and self._walk_controller is not None:
+            # Movement is handled by WalkController; PetWindow only
+            # reads the computed position and applies it.
+            wc = self._walk_controller
+            still_moving = wc.update(delta_time)
+            # Clamp to screen every frame to guarantee the pet never
+            # drifts outside the visible region.
+            screen = QGuiApplication.primaryScreen()
+            geom = screen.availableGeometry()
+            wc.clamp_to_bounds(
+                float(geom.x()), float(geom.y()),
+                float(geom.width()), float(geom.height()),
+                float(self._target_size), float(self._target_size),
+            )
+            new_x = round(wc.x)
+            new_y = round(wc.y)
+            self.move(new_x, new_y)
+            self._base_y = new_y  # keep base_y current for breathing on return
+            _ = still_moving  # arrival detection is in AutonomyController
+        else:
+            # Breathing controls vertical position when not walking.
+            if self._base_y is not None:
+                offset = round(self._breathing.offset_px)
+                self.move(self.x(), self._base_y + offset)
 
         cursor_pos = self._cursor_position_provider()
         pet_center_x = self.x() + self._target_size / 2
@@ -333,9 +383,18 @@ class PetWindow(QWidget):
             else self._cursor_attention.tilt_degrees
         )
         total_rotation_degrees = self._sway.tilt_degrees + cursor_tilt_degrees
+
+        # Build a single compound transform: rotation + blink scale +
+        # optional horizontal flip for walking left.
+        flip_x = (
+            -1.0
+            if (is_walking and self._walk_controller is not None
+                and self._walk_controller.facing_left)
+            else 1.0
+        )
         transform = QTransform()
         transform.rotate(total_rotation_degrees)
-        transform.scale(1.0, self._blink.scale_y)
+        transform.scale(flip_x, self._blink.scale_y)
         self._sprite_item.setTransform(transform)
 
     def _publish_cursor_interest_if_changed(self) -> None:
@@ -363,8 +422,32 @@ class PetWindow(QWidget):
         )
 
     def _on_ai_state_changed(self, event: Event) -> None:
-        """Track the AI's current state, purely to gate cursor-tilt rendering."""
-        self._current_ai_state = event.payload.get("new_state")
+        """Track the AI's current state.
+
+        Used for two things:
+        1. Gate cursor-tilt rendering during interruptible behaviours.
+        2. Kick off a walk when transitioning into ``PetState.WALK``:
+           pick a destination from the current screen geometry and
+           hand it to ``WalkController.start_walk()``. PetWindow is
+           the right place to do this because it's the only subsystem
+           that owns (and reads) the live screen geometry.
+        """
+        new_state = event.payload.get("new_state")
+        self._current_ai_state = new_state
+
+        if new_state is PetState.WALK and self._walk_controller is not None:
+            screen = QGuiApplication.primaryScreen()
+            geom = screen.availableGeometry()
+            dest_x, dest_y = self._walk_controller.choose_destination(
+                float(geom.x()), float(geom.y()),
+                float(geom.width()), float(geom.height()),
+                float(self._target_size), float(self._target_size),
+            )
+            self._walk_controller.start_walk(dest_x, dest_y)
+
+        elif new_state is not PetState.WALK and self._walk_controller is not None:
+            # Cancel any lingering walk (e.g. if interrupted externally).
+            self._walk_controller.cancel()
 
     # -- input ---------------------------------------------------------
 
