@@ -161,7 +161,8 @@ class SpriteSheet:
         columns: int = 8,
         rows: int = 4,
     ) -> SpriteSheet:
-        """Convenience method to construct a SpriteSheet from dimensions without hardcoding frame size."""
+        """Convenience method to construct a SpriteSheet from dimensions without
+        hardcoding frame size."""
         return cls.from_grid(sheet_width=width, sheet_height=height, columns=columns, rows=rows)
 
     @classmethod
@@ -169,7 +170,7 @@ class SpriteSheet:
         """Parse JSON atlas metadata (TexturePacker format or frame array).
 
         Expected schema:
-        ``{"meta": {"size": {"w": 256, "h": 256}}, "frames": [{"frame": {"x": 0, "y": 0, "w": 64, "h": 64}}, ...]}``
+        ``{"meta": {"size": {"w": 256, "h": 256}}, "frames": [...] }``
         or a list/dict of frame definitions.
         """
         meta = atlas_data.get("meta", {})
@@ -343,7 +344,12 @@ class SpriteAnimator:
     def add_clip(self, clip: AnimationClip) -> None:
         """Register a new ``AnimationClip``."""
         self._clips[clip.name] = clip
-        logger.debug("Registered AnimationClip '%s' (%d frames, %.1f FPS)", clip.name, clip.frame_count, clip.fps)
+        logger.debug(
+            "Registered AnimationClip '%s' (%d frames, %.1f FPS)",
+            clip.name,
+            clip.frame_count,
+            clip.fps,
+        )
 
     def _format_clip_key(self, name: str | Any) -> str:
         if hasattr(name, "value"):
@@ -422,7 +428,8 @@ class SpriteAnimator:
                 target_key = fallback_key
             else:
                 raise KeyError(
-                    f"No animation clip registered for '{key}' and fallback '{fallback_key}' is unavailable."
+                    f"No animation clip registered for '{key}' and fallback "
+                    f"'{fallback_key}' is unavailable."
                 )
 
         if self._current_clip is not None and self._current_clip.name == target_key and not restart:
@@ -500,13 +507,21 @@ class SpriteAnimator:
         self.play(state_name, fallback=self._default_clip or "idle")
 
 
-def build_default_pet_sprite_sheet(width: int = 1536, height: int = 1024) -> tuple[SpriteSheet, dict[str, AnimationClip]]:
-    """Build standard 4x8 SpriteSheet and AnimationClips matching the repository sprite sheet layout."""
+def build_default_pet_sprite_sheet(
+    width: int = 1536, height: int = 1024
+) -> tuple[SpriteSheet, dict[str, AnimationClip]]:
+    """Build standard 4x8 SpriteSheet and AnimationClips matching the layout."""
     sheet = SpriteSheet.from_image_dimensions(width, height, columns=8, rows=4)
 
     clips = {
         "idle": AnimationClip("idle", frame_indices=[0, 1, 2], fps=4.0, loop=True),
-        "blink": AnimationClip("blink", frame_indices=[0, 3, 4, 5, 6, 7, 0], fps=8.0, loop=False, next_clip="idle"),
+        "blink": AnimationClip(
+            "blink",
+            frame_indices=[0, 3, 4, 5, 6, 7, 0],
+            fps=8.0,
+            loop=False,
+            next_clip="idle",
+        ),
         "walk": AnimationClip("walk", frame_indices=list(range(8, 16)), fps=10.0, loop=True),
         "stand": AnimationClip("stand", frame_indices=[16, 17], fps=2.0, loop=True),
         "sleep": AnimationClip("sleep", frame_indices=list(range(24, 30)), fps=4.0, loop=True),

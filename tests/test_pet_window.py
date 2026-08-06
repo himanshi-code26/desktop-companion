@@ -413,7 +413,10 @@ def test_cursor_tilt_is_suppressed_during_interruptible_ai_state(qtbot, sprite_p
     qtbot.addWidget(window)
 
     event_bus.publish(
-        Event(EventType.STATE_CHANGED, {"previous_state": PetState.IDLE, "new_state": PetState.SLEEP})
+        Event(
+            EventType.STATE_CHANGED,
+            {"previous_state": PetState.IDLE, "new_state": PetState.SLEEP},
+        )
     )
 
     for _ in range(120):  # 2 seconds - long enough for attention to fully engage
@@ -436,13 +439,19 @@ def test_cursor_tilt_resumes_once_state_returns_to_idle(qtbot, sprite_path) -> N
     qtbot.addWidget(window)
 
     event_bus.publish(
-        Event(EventType.STATE_CHANGED, {"previous_state": PetState.IDLE, "new_state": PetState.SLEEP})
+        Event(
+            EventType.STATE_CHANGED,
+            {"previous_state": PetState.IDLE, "new_state": PetState.SLEEP},
+        )
     )
     for _ in range(60):
         window.advance(1 / 60)
 
     event_bus.publish(
-        Event(EventType.STATE_CHANGED, {"previous_state": PetState.SLEEP, "new_state": PetState.IDLE})
+        Event(
+            EventType.STATE_CHANGED,
+            {"previous_state": PetState.SLEEP, "new_state": PetState.IDLE},
+        )
     )
     for _ in range(60):
         window.advance(1 / 60)
@@ -457,7 +466,7 @@ def test_cursor_tilt_resumes_once_state_returns_to_idle(qtbot, sprite_path) -> N
 def test_walk_controller_moves_window_position(qtbot, sprite_path) -> None:
     """While WALK is active and a WalkController is attached, advance()
     must shift the window to match the controller's position."""
-    from desktop_pet.ai import Event, EventBus, EventType, PetState
+    from desktop_pet.ai import EventBus, PetState
 
     event_bus = EventBus()
     walk_ctrl = WalkController(speed=500.0)  # fast so we see movement in a few ticks
@@ -539,4 +548,4 @@ def test_no_walk_controller_means_no_walk_positioning(qtbot, sprite_path) -> Non
         window.advance(1 / 60)
 
     # Without walk controller the window stays at breathing position (within 4 px)
-    assert abs(window.y() - base_y) <= 4.0
+    assert abs(window.y() - base_y) <= 4.0

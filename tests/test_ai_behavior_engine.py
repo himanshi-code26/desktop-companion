@@ -79,4 +79,4 @@ class TestSharedEventBus:
 
         bus = EventBus()
         engine = BehaviorEngine(event_bus=bus)
-        assert engine.event_bus is bus
+        assert engine.event_bus is bus

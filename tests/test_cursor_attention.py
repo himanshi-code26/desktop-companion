@@ -13,7 +13,9 @@ import pytest
 from desktop_pet.behavior.cursor_attention import CursorAttention
 
 
-def _settle(attention: CursorAttention, cursor_x: float, cursor_y: float, seconds: float = 2.0) -> None:
+def _settle(
+    attention: CursorAttention, cursor_x: float, cursor_y: float, seconds: float = 2.0
+) -> None:
     """Advance ``attention`` at 60fps for ``seconds`` with a fixed cursor
     position, so any in-flight smoothing has time to converge."""
     steps = int(60 * seconds)
@@ -56,7 +58,9 @@ class TestZoneClassification:
         assert attention.tilt_degrees == pytest.approx(0.0, abs=0.05)
 
     def test_zone_boundaries_are_inclusive_to_the_inner_zone(self) -> None:
-        attention = CursorAttention(zone_a_radius_px=180.0, zone_b_radius_px=350.0, rng=random.Random(4))
+        attention = CursorAttention(
+            zone_a_radius_px=180.0, zone_b_radius_px=350.0, rng=random.Random(4)
+        )
         _settle(attention, cursor_x=180.0, cursor_y=0.0)
         assert attention.current_zone == "A"
 
@@ -116,7 +120,9 @@ class TestDisinterestAndReengagement:
         assert attention.is_interested is False
 
         for i in range(60):  # 1 second of renewed movement
-            attention.advance(1 / 60, cursor_x=100.0 + i * 2, cursor_y=0.0, pet_center_x=0.0, pet_center_y=0.0)
+            attention.advance(
+                1 / 60, cursor_x=100.0 + i * 2, cursor_y=0.0, pet_center_x=0.0, pet_center_y=0.0
+            )
         assert attention.is_interested is True
 
     def test_slow_sustained_drift_does_not_count_as_stillness(self) -> None:

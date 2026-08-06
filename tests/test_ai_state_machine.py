@@ -191,4 +191,4 @@ class TestStateMachine:
         entered = [e for e in received if e.event_type is EventType.STATE_ENTERED]
         exited = [e for e in received if e.event_type is EventType.STATE_EXITED]
         assert entered[-1].payload["state"] is PetState.WALK
-        assert exited[-1].payload["state"] is PetState.IDLE
+        assert exited[-1].payload["state"] is PetState.IDLE

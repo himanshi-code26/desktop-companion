@@ -148,8 +148,8 @@ _WEIGHT_CONFIG_KEYS: dict[PetState, str] = {
     PetState.HUG: "hug_probability",
 }
 
-DEFAULT_MIN_IDLE_SECONDS: float = 15.0
-DEFAULT_MAX_IDLE_SECONDS: float = 45.0
+DEFAULT_MIN_IDLE_SECONDS: float = 2.0
+DEFAULT_MAX_IDLE_SECONDS: float = 5.0
 
 
 class AutonomyController:

@@ -186,7 +186,8 @@ class CursorAwareness:
         # constant is chosen within the required 200-400ms window, so
         # the response always eases rather than snapping to target.
         alpha = 1.0 - math.exp(-delta_time / self._transition_seconds)
-        self._current_tilt_degrees += (self._target_tilt_degrees - self._current_tilt_degrees) * alpha
+        diff_tilt = self._target_tilt_degrees - self._current_tilt_degrees
+        self._current_tilt_degrees += diff_tilt * alpha
         self._current_lean_x_px += (self._target_lean_x_px - self._current_lean_x_px) * alpha
         self._current_lean_y_px += (self._target_lean_y_px - self._current_lean_y_px) * alpha
 

@@ -92,7 +92,9 @@ def test_get_ai_config_defaults_when_file_missing(monkeypatch, tmp_path) -> None
     assert config_module.get_ai_config() == config_module.DEFAULT_AI_CONFIG
 
 
-def test_get_ai_config_defaults_when_section_is_not_an_object(monkeypatch, tmp_path, caplog) -> None:
+def test_get_ai_config_defaults_when_section_is_not_an_object(
+    monkeypatch, tmp_path, caplog
+) -> None:
     _write_config(tmp_path, {"ai": "not-an-object"})
     monkeypatch.setattr(config_module, "get_config_dir", lambda: tmp_path)
 
@@ -151,4 +153,4 @@ def test_get_behavior_config_defaults_when_section_is_not_an_object(
         result = config_module.get_behavior_config()
 
     assert result == config_module.DEFAULT_BEHAVIOR_CONFIG
-    assert any("is not an object" in message for message in caplog.messages)
+    assert any("is not an object" in message for message in caplog.messages)

@@ -49,9 +49,9 @@ DEFAULT_BEHAVIOR_CONFIG: dict[str, Any] = {
     "follow_cursor_timeout_seconds": 20,
     "enabled": True,
     # Idle wait before the next autonomous behaviour (including walking).
-    # Defaulted to 2–6 s so roaming is visible immediately after launch.
+    # Defaulted to 2–5 s so roaming is visible immediately after launch.
     "min_idle_seconds": 2.0,
-    "max_idle_seconds": 6.0,
+    "max_idle_seconds": 5.0,
     # Walk speed in pixels per second (at size_scale=1.0 / 128 px sprite).
     "walk_speed_px_per_sec": 80.0,
     "sleep_probability": 1.0,
@@ -167,4 +167,4 @@ def get_behavior_config() -> dict[str, Any]:
 
     resolved = {**DEFAULT_BEHAVIOR_CONFIG, **raw_behavior_config}
     logger.info("Behavior configuration loaded: %s", resolved)
-    return resolved
+    return resolved

@@ -14,7 +14,6 @@ import pytest
 
 from desktop_pet.physics.walk_controller import WalkController
 
-
 # ── helpers ────────────────────────────────────────────────────────────────
 
 def _controller_at(x: float, y: float, speed: float = 100.0) -> WalkController:

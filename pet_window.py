@@ -44,8 +44,8 @@ back; it's already a single continuous value.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from PySide6.QtCore import QPoint, QRectF, Qt
 from PySide6.QtGui import (

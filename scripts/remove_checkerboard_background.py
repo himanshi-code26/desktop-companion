@@ -64,7 +64,9 @@ def _sample_border_tile_colors(rgb: np.ndarray, border_width: int = 12) -> list[
     return [dark_tile, light_tile]
 
 
-def _is_checker_colored(rgb: np.ndarray, tile_colors: list[np.ndarray], tolerance: float = 18.0) -> np.ndarray:
+def _is_checker_colored(
+    rgb: np.ndarray, tile_colors: list[np.ndarray], tolerance: float = 18.0
+) -> np.ndarray:
     """Boolean mask of pixels close to either checkerboard tile color."""
     mask = np.zeros(rgb.shape[:2], dtype=bool)
     for tile_color in tile_colors:
@@ -76,7 +78,8 @@ def _is_checker_colored(rgb: np.ndarray, tile_colors: list[np.ndarray], toleranc
 def _border_connected_mask(candidate_mask: np.ndarray) -> np.ndarray:
     """Keep only the True regions of candidate_mask that touch the image border."""
     labeled, _ = connected_components(candidate_mask)
-    border_labels = set(labeled[0, :]) | set(labeled[-1, :]) | set(labeled[:, 0]) | set(labeled[:, -1])
+    border = set(labeled[0, :]) | set(labeled[-1, :]) | set(labeled[:, 0]) | set(labeled[:, -1])
+    border_labels = border
     border_labels.discard(0)
     return np.isin(labeled, list(border_labels))
 

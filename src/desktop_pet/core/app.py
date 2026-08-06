@@ -108,7 +108,8 @@ class Application:
         self._qt_app.setQuitOnLastWindowClosed(True)
 
         sprite_path = resolve_sprite_path()
-        target_size = _compute_target_size(get_size_scale())
+        size_scale = get_size_scale()
+        target_size = _compute_target_size(size_scale)
 
         # AI foundation + autonomy (Phase 6 + Phase 7): a single EventBus
         # is shared by the BehaviorEngine, the AutonomyController, and
@@ -161,4 +162,4 @@ class Application:
             "focused) to quit.",
             self._loop.target_fps,
         )
-        return self._qt_app.exec()
+        return self._qt_app.exec()

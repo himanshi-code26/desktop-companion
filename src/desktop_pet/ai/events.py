@@ -30,7 +30,8 @@ class EventType(Enum):
     """A state's exit() just ran. Payload: {"state": PetState}."""
 
     STATE_CHANGED = "state_changed"
-    """A transition completed. Payload: {"previous_state": PetState | None, "new_state": PetState}."""
+    """A transition completed.
+    Payload: {"previous_state": PetState | None, "new_state": PetState}."""
 
     STATE_TRANSITION_DENIED = "state_transition_denied"
     """A requested transition was rejected (unregistered target state).
